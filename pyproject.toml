@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cursor-cloud-agents-tensorlake"
+version = "0.1.0"
+description = "Run Cursor Cloud Agents self-hosted workers on Tensorlake Sandboxes"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "tensorlake>=0.5.120",
+  "httpx",
+  "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+cursor-tl-up = "cursor_tensorlake.up:main"
+cursor-tl-build-image = "cursor_tensorlake.worker_image:main"
+cursor-tl-build-orchestrator-image = "cursor_tensorlake.orchestrator_image:main"
+cursor-tl-spawn = "cursor_tensorlake.spawn:main"
+cursor-tl-orchestrator = "cursor_tensorlake.orchestrator:main"
+cursor-tl-orchestrator-sandbox = "cursor_tensorlake.launch_orchestrator_sandbox:main"
+cursor-tl-pool = "cursor_tensorlake.pool:main"
+cursor-tl-my-machine = "cursor_tensorlake.my_machine:main"
+
+[tool.setuptools]
+packages = ["cursor_tensorlake"]
+
+[tool.setuptools.package-data]
+cursor_tensorlake = ["checkout_repo.sh"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = ["pytest>=7"]
