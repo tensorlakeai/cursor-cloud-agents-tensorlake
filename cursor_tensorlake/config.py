@@ -102,6 +102,7 @@ class Config:
     worker_labels_json: str | None
     worker_computer_use: bool
     worker_share_desktop: str | None
+    worker_display: str | None
     warm_idle: int
     max_workers: int
     session_retention_secs: int
@@ -153,6 +154,8 @@ class Config:
                 "an any-repo pool serves every repository, so unset one of them"
             )
 
+        share_desktop = _parse_share_desktop(env.get("WORKER_SHARE_DESKTOP"))
+
         allow_out = _parse_list(env.get("SANDBOX_ALLOW_OUT"))
         if allow_out:
             for host in REQUIRED_EGRESS:
@@ -183,7 +186,8 @@ class Config:
             ),
             worker_labels_json=_parse_labels(env.get("WORKER_LABELS_JSON")),
             worker_computer_use=_bool(env.get("WORKER_COMPUTER_USE"), False),
-            worker_share_desktop=_parse_share_desktop(env.get("WORKER_SHARE_DESKTOP")),
+            worker_share_desktop=share_desktop,
+            worker_display=_parse_display(env.get("WORKER_DISPLAY"), share_desktop=share_desktop),
             warm_idle=_non_negative_int(env, "WARM_IDLE", 0),
             max_workers=_non_negative_int(env, "MAX_WORKERS", 0),
             session_retention_secs=_non_negative_int(
@@ -456,15 +460,51 @@ def worker_command(
     return command
 
 
+def desktop_environment(config: Config) -> dict[str, str]:
+    """``DISPLAY`` for a computer-use worker, so the agent's own shells find it.
+
+    Cursor's executor gets the display from ``--display``, but a
+    ``google-chrome`` the agent starts from a terminal tool call reads the
+    environment. Without this it fails to open, on a machine that has a
+    perfectly good desktop.
+    """
+    if not (config.worker_computer_use and config.worker_display):
+        return {}
+    return {
+        "DISPLAY": config.worker_display,
+        "XAUTHORITY": f"{SANDBOX_HOME}/.Xauthority",
+    }
+
+
+def heartbeat_settings(config: Config) -> dict[str, object]:
+    """Settings the orchestrator echoes and the launcher compares with ``.env``.
+
+    Every one of them changes how the spawn hook launches a worker, so a change
+    has to restart the orchestrator process instead of waiting for a worker to
+    read it. The orchestrator writes these; ``cursor-tl-up`` reads them back.
+    """
+    return {
+        "pool_mode": "any-repo" if config.cursor_pool_any_repo else "repo",
+        "pool_repo_url": config.cursor_pool_repo_url,
+        "computer_use": config.worker_computer_use,
+        "display": config.worker_display,
+        "share_desktop": config.worker_share_desktop,
+    }
+
+
 def computer_use_flags(config: Config) -> list[str]:
     """``worker`` flags for computer use; shared by pool workers and My Machines.
 
-    Linux: with no ``--display`` the worker starts its own TigerVNC + Xfce
-    desktop. The image built with ``WORKER_COMPUTER_USE=true`` carries them.
+    Linux: ``--display`` pins the worker to an existing X display. The desktop
+    worker image already boots a TigerVNC + Xfce session on ``:1``, so the
+    default attaches to that one instead of letting the worker start a second
+    desktop. ``WORKER_DISPLAY=managed`` restores the worker-managed desktop.
     """
     if not config.worker_computer_use:
         return []
     flags = ["--computer-use"]
+    if config.worker_display:
+        flags.extend(["--display", config.worker_display])
     if config.worker_share_desktop:
         flags.extend(["--share-desktop", config.worker_share_desktop])
     return flags
@@ -489,6 +529,7 @@ def worker_environment(config: Config, claim: Claim) -> dict[str, str]:
     }
     if claim.worker_name:
         env["CURSOR_WORKER_NAME"] = claim.worker_name
+    env.update(desktop_environment(config))
     for name in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy"):
         value = os.environ.get(name, "").strip()
         if value:
@@ -497,6 +538,32 @@ def worker_environment(config: Config, claim: Claim) -> dict[str, str]:
 
 
 SHARE_DESKTOP_MODES = ("view", "view_and_control")
+
+# The desktop worker image boots TigerVNC + Xfce here before any worker starts.
+DEFAULT_WORKER_DISPLAY = ":1"
+MANAGED_DISPLAY_WORDS = ("managed", "auto", "none")
+
+
+def _parse_display(value: str | None, *, share_desktop: str | None = None) -> str | None:
+    """The X display a computer-use worker attaches to, or None for a managed one.
+
+    Reusing the display the image already runs keeps one desktop per sandbox at
+    a number the operator can predict, which is what makes an outside recorder
+    able to film what the agent drives. ``WORKER_SHARE_DESKTOP`` documents the
+    opposite: it shares a worker-created, isolated desktop, so it turns the
+    default off unless ``WORKER_DISPLAY`` names a display explicitly.
+    """
+    display = _clean(value)
+    if display is None:
+        return None if share_desktop else DEFAULT_WORKER_DISPLAY
+    if display.lower() in MANAGED_DISPLAY_WORDS:
+        return None
+    if not re.fullmatch(r":\d+(\.\d+)?", display):
+        raise ConfigError(
+            "WORKER_DISPLAY must be an X display such as :1, or 'managed' to let "
+            "the worker start its own desktop"
+        )
+    return display
 
 
 def _parse_share_desktop(value: str | None) -> str | None:

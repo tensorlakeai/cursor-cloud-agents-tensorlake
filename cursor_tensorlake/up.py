@@ -334,7 +334,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="rebuild the orchestrator image and recreate the orchestrator sandbox from it (after code changes)",
     )
-    parser.add_argument("--computer-use", action="store_true", help="set WORKER_COMPUTER_USE=true: desktop image and --computer-use workers")
+    parser.add_argument("--computer-use", action="store_true", help="set WORKER_COMPUTER_USE=true: desktop image and --computer-use workers. Add --rebuild the first time, so the orchestrator image carries it")
     parser.add_argument("--ready-timeout", type=int, default=900, help="workerReadyTimeoutSeconds for a new pool")
     parser.add_argument(
         "--repo-url",

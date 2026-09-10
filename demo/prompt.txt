@@ -1,0 +1,12 @@
+A customer reports that on the storefront in visual-qa-demo/ the "Add to cart"
+button does nothing: the cart badge stays at 0. The test suite is green and no
+JavaScript error appears, so please reproduce it the way the customer would.
+
+Serve the app, open it in Google Chrome on this machine's desktop, and click
+the Add to cart button yourself. Compare it with the other controls on the
+page. When you have found the cause, fix it with the smallest CSS change that
+works, and remove any earlier workaround the real fix makes unnecessary.
+
+Then confirm the fix in the browser: click Add to cart again and check that
+the cart badge shows 1. Report what you saw on screen before and after, and
+open a pull request.

@@ -82,7 +82,7 @@ Options:
 ```bash
 uv run cursor-tl-up --repo-url URL       # serve one repository only; see Repositories
 uv run cursor-tl-up --any-repo           # let Cursor clone after the claim; see Repositories
-uv run cursor-tl-up --computer-use       # desktop worker image; workers start with --computer-use
+uv run cursor-tl-up --computer-use --rebuild  # desktop worker image; workers start with --computer-use
 uv run cursor-tl-up --restart            # restart the orchestrator process even if .env did not change
 uv run cursor-tl-up --rebuild            # after a code change: rebuild the orchestrator image and recreate its sandbox
 uv run cursor-tl-up --non-interactive    # fail instead of asking for missing keys, for CI and cron
@@ -200,16 +200,45 @@ resumes it. A sandbox suspended for longer than `SESSION_RETENTION_SECS`
 ## Computer use
 
 Cursor agents can drive a desktop and a browser on Linux workers. Run
-`cursor-tl-up --computer-use`, or set `WORKER_COMPUTER_USE=true` in `.env`
-before you build the worker image. The worker image is then built from
-`tensorlake/ubuntu-vnc` and each worker starts with `--computer-use`. No
+`cursor-tl-up --computer-use --rebuild`, or set `WORKER_COMPUTER_USE=true` in
+`.env`. The worker image is then built from `tensorlake/ubuntu-vnc`, it clears
+Chrome's first-run dialog, and each worker starts with `--computer-use`. No
 inbound port opens.
 
+`--rebuild` matters the first time: the orchestrator image carries this
+package, and the orchestrator is what passes `--computer-use` to a worker.
+Confirm it took with `cursor-tl-orchestrator-sandbox --status`, which reports
+`computer_use` and `display`.
+
+The desktop image boots a TigerVNC and Xfce session on display `:1` before any
+worker starts, so `WORKER_DISPLAY` defaults to `:1` and the worker attaches to
+that one. One desktop per sandbox, at a number you can predict and record.
+`WORKER_DISPLAY=managed` lets the worker start its own desktop instead.
+
 Set `WORKER_SHARE_DESKTOP=view` or `view_and_control` to let authorized
-viewers watch the agent desktop from Cursor.
+viewers watch the agent desktop from Cursor. That shares a desktop the worker
+creates itself, so it turns the `WORKER_DISPLAY` default off.
 
 Test it with a task such as "open a browser, visit example.com, and take a
-screenshot". Desktop workers need at least 4096 MB of memory.
+screenshot". Desktop workers need at least 4096 MB of memory. For proof that
+the desktop is usable before you send a task, run Cursor's own preflight in a
+worker sandbox:
+
+```bash
+tl sbx exec cursor-<worker-id> agent worker --pool tensorlake --computer-use --display :1 debug
+```
+
+### Visual QA demo
+
+[demo/README.md](demo/README.md) is a full walkthrough: an agent opens a web
+app in Chrome inside a sandbox, finds a bug that only a click reveals, fixes
+it, and checks the fix by looking again. `cursor-tl-demo` records the desktop
+and copies the video and screenshots out.
+
+```bash
+uv run cursor-tl-demo watch      # wait for a worker sandbox, start recording
+uv run cursor-tl-demo collect    # video and stills into ./demo-artifacts
+```
 
 ## My Machines
 
@@ -270,6 +299,7 @@ dropdown at cursor.com/agents. Hibernation is by hand.
 | `cursor-tl-orchestrator-sandbox --logs [--lines N]` | Tail the orchestrator log |
 | `cursor-tl-orchestrator-sandbox --restart` | Restart the orchestrator process so it reads the current `.env` |
 | `cursor-tl-orchestrator-sandbox --terminate` | Terminate the orchestrator sandbox. Worker sandboxes stay |
+| `cursor-tl-demo watch` / `collect` / `stop` / `status` | Record a worker's desktop and copy the video out. See [demo/README.md](demo/README.md) |
 | `cursor-tl-pool pending` | Pending and claimed-offline requests for the pool |
 | `cursor-tl-pool workers` / `summary` | Connected and idle workers |
 | `cursor-tl-pool release <request-id>` | Release a stuck claim so Cursor re-queues it |
@@ -293,6 +323,8 @@ restarts it when the pool settings changed.
 | `REPOS` | My Machines | HTTPS repositories to clone, comma separated. |
 | `CURSOR_POOL_MODE` | No | `repo` (default) or `any-repo`. See [Repositories](#repositories). |
 | `CURSOR_POOL_REPO_URL` | No | Serve one repository only. `repo` mode only. |
+| `WORKER_COMPUTER_USE` | No | Desktop image, and workers start with `--computer-use`. |
+| `WORKER_DISPLAY` | No | X display for computer use. Blank reuses `:1`; `managed` lets the worker start its own. |
 
 Common changes: `CURSOR_POOL` (pool name, default `tensorlake`), `MAX_WORKERS`
 (cap on live worker sandboxes), `SANDBOX_CPUS` / `SANDBOX_MEMORY_MB` /
@@ -326,6 +358,10 @@ least-privilege service account per customer and set `SANDBOX_ALLOW_OUT`.
 - **Changed `.env`, but the orchestrator still uses the old settings.** Run
   `cursor-tl-up` again. It compares the running settings with `.env` and
   restarts the process when they differ. `--restart` forces it.
+- **The agent says it cannot open a browser, or `--computer-use` seems ignored.**
+  Check `cursor-tl-orchestrator-sandbox --status`. If `computer_use` is absent
+  or `false` while `.env` says `true`, the orchestrator is running an older
+  build of this package: `cursor-tl-up --computer-use --rebuild`.
 - **`tl sbx ls` shows no `cursor-*` sandboxes.** The `tl` CLI uses the key in
   your shell, and `.env` may hold a key for another Tensorlake project. Export
   the `TENSORLAKE_API_KEY` from `.env` in that shell, or use
