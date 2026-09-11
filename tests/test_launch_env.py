@@ -25,6 +25,7 @@ MATCHING = {
     "pool_repo_url": None,
     "computer_use": False,
     "display": ":1",
+    "shell_display": ":1",
     "share_desktop": None,
 }
 

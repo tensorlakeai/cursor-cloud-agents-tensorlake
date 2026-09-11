@@ -26,13 +26,12 @@ cursor-tl-orchestrator = "cursor_tensorlake.orchestrator:main"
 cursor-tl-orchestrator-sandbox = "cursor_tensorlake.launch_orchestrator_sandbox:main"
 cursor-tl-pool = "cursor_tensorlake.pool:main"
 cursor-tl-my-machine = "cursor_tensorlake.my_machine:main"
-cursor-tl-demo = "cursor_tensorlake.demo:main"
 
 [tool.setuptools]
 packages = ["cursor_tensorlake"]
 
 [tool.setuptools.package-data]
-cursor_tensorlake = ["checkout_repo.sh", "demo_recorder.sh"]
+cursor_tensorlake = ["checkout_repo.sh"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
