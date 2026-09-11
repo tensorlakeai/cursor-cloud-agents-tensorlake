@@ -15,8 +15,10 @@ The recipe on top of a Tensorlake Ubuntu base:
 - the checkout hook at ``/usr/local/bin/cursor-tl-checkout``;
 - ``/home/tl-user/workspace`` and ``/var/log/cursor-tl`` owned by uid 1000;
 - with ``WORKER_COMPUTER_USE=true``: the base switches to ``tensorlake/ubuntu-vnc``
-  (Xfce, TigerVNC, Google Chrome, Firefox) and the recipe adds the packages
-  Cursor's Linux computer use needs (``xdotool``, ``ffmpeg``, X11 utilities).
+  (Xfce, TigerVNC, Google Chrome, Firefox), the recipe adds the packages
+  Cursor's Linux computer use needs (``xdotool``, ``ffmpeg``, X11 utilities),
+  and it clears Chrome's first-run dialog so the browser opens on the page the
+  agent asked for.
 
 The orchestrator image reuses ``cli_recipe()`` so both images carry the same CLI.
 """
@@ -89,6 +91,23 @@ APT_DESKTOP = (
     "rm -rf /var/lib/apt/lists/*"
 )
 
+# Google Chrome shows an "Additional Terms of Service" dialog on a profile's
+# first run, which covers the whole screen and hides whatever the agent meant
+# to look at. The sentinel file marks the default profile as already seen. The
+# managed policy covers the prompts that do not depend on the profile, and
+# applies however the browser is started, by the agent or by Cursor itself.
+CHROME_FIRST_RUN = (
+    "install -d -m 0755 -o 1000 -g 1000 /home/tl-user/.config "
+    "/home/tl-user/.config/google-chrome && "
+    "touch '/home/tl-user/.config/google-chrome/First Run' && "
+    "chown 1000:1000 '/home/tl-user/.config/google-chrome/First Run' && "
+    "install -d -m 0755 /etc/opt/chrome/policies/managed && "
+    "printf '%s' '{\"DefaultBrowserSettingEnabled\": false, "
+    '\"MetricsReportingEnabled\": false, \"PromotionalTabsEnabled\": false, '
+    "\"BrowserSignin\": 0}' "
+    "> /etc/opt/chrome/policies/managed/cursor-tl.json"
+)
+
 WORKER_DIRS = (
     f"install -d -m 0755 -o 1000 -g 1000 {WORKSPACE_DIR} {EXTRA_REPOS_DIR} {WORKER_LOG_DIR} && "
     "install -d -m 1777 /tmp/cursor-compile-cache"
@@ -134,6 +153,7 @@ def build_recipe(
     recipe: list[tuple[str, object]] = [("base", base_image), *cli_recipe(version, b2sum, arch)]
     if computer_use:
         recipe.append(("run", APT_DESKTOP))
+        recipe.append(("run", CHROME_FIRST_RUN))
     return recipe
 
 

@@ -52,6 +52,40 @@ class WorkerRecipeTests(unittest.TestCase):
         self.assertFalse(worker_image.computer_use_enabled())
 
 
+    def test_no_recipe_step_spans_lines(self) -> None:
+        # Each step becomes one RUN instruction. A newline inside one ends the
+        # instruction early and the Dockerfile fails to parse.
+        from cursor_tensorlake.worker_image import build_recipe
+        from cursor_tensorlake.orchestrator_image import orchestrator_recipe
+
+        recipes = [
+            build_recipe("tensorlake/ubuntu-minimal", "v", "b", "x64"),
+            build_recipe("tensorlake/ubuntu-vnc", "v", "b", "x64", computer_use=True),
+            orchestrator_recipe("tensorlake/ubuntu-minimal", "v", "b", "x64"),
+        ]
+        for recipe in recipes:
+            for kind, value in recipe:
+                if kind in ("run", "base", "workdir"):
+                    self.assertNotIn("\n", str(value), f"{kind} step spans lines: {value!r:.80}")
+
+    def test_computer_use_clears_the_chrome_first_run_dialog(self) -> None:
+        # Chrome's first-run terms dialog covers the whole screen, so an agent
+        # told to look at a page sees the dialog instead.
+        from cursor_tensorlake.worker_image import build_recipe
+
+        steps = [
+            str(value) for kind, value in
+            build_recipe("tensorlake/ubuntu-vnc", "v", "b", "x64", computer_use=True)
+            if kind == "run"
+        ]
+        self.assertTrue(any("First Run" in step for step in steps), steps)
+        plain = [
+            str(value) for kind, value in
+            build_recipe("tensorlake/ubuntu-minimal", "v", "b", "x64") if kind == "run"
+        ]
+        self.assertFalse(any("First Run" in step for step in plain))
+
+
 class OrchestratorRecipeTests(unittest.TestCase):
     def test_checkout_recipe_copies_package(self) -> None:
         recipe = orchestrator_image.orchestrator_recipe("tensorlake/ubuntu-minimal", "v", "sum", "x64")

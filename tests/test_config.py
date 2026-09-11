@@ -250,6 +250,67 @@ class WorkerCommandTests(unittest.TestCase):
         plain, _ = make_config()
         self.assertNotIn("--computer-use", machine_worker_command(plain, "tl-demo", []))
 
+    def test_computer_use_pins_the_display_the_image_already_runs(self) -> None:
+        # The desktop worker image boots TigerVNC + Xfce on :1 before any
+        # worker starts. Attaching to it keeps one desktop per sandbox, at a
+        # number an outside recorder can film.
+        config, _ = make_config(WORKER_COMPUTER_USE="true")
+        argv = worker_command(config, make_claim(), has_repo=True)
+        self.assertEqual(argv[argv.index("--display") + 1], ":1")
+        env = worker_environment(config, make_claim())
+        self.assertEqual(env["DISPLAY"], ":1")
+        self.assertEqual(env["XAUTHORITY"], "/home/tl-user/.Xauthority")
+
+    def test_share_desktop_drops_the_pin_but_still_points_the_shells_at_it(self) -> None:
+        # Cursor refuses to share a pinned display: it calls that one
+        # operator-owned and starts a separate desktop for viewers. So sharing
+        # has to give up the pin. The shells must then follow Cursor's desktop,
+        # or a browser started from one opens on the image's :1 and every
+        # screenshot comes back empty.
+        config, _ = make_config(WORKER_COMPUTER_USE="true", WORKER_SHARE_DESKTOP="view")
+        self.assertIsNone(config.worker_display)
+        argv = worker_command(config, make_claim(), has_repo=True)
+        self.assertNotIn("--display", argv)
+        self.assertEqual(argv[argv.index("--share-desktop") + 1], "view")
+        self.assertEqual(worker_environment(config, make_claim())["DISPLAY"], ":0")
+
+    def test_managed_display_can_name_the_number(self) -> None:
+        # Escape hatch for the day Cursor's desktop is not :0.
+        config, _ = make_config(WORKER_COMPUTER_USE="true", WORKER_DISPLAY="managed:4")
+        self.assertIsNone(config.worker_display)
+        self.assertEqual(worker_environment(config, make_claim())["DISPLAY"], ":4")
+
+    def test_explicit_display_is_honoured(self) -> None:
+        config, _ = make_config(
+            WORKER_COMPUTER_USE="true", WORKER_SHARE_DESKTOP="view", WORKER_DISPLAY=":2"
+        )
+        self.assertEqual(config.worker_display, ":2")
+
+    def test_managed_display_asks_the_worker_for_its_own_desktop(self) -> None:
+        config, _ = make_config(WORKER_COMPUTER_USE="true", WORKER_DISPLAY="managed")
+        self.assertIsNone(config.worker_display)
+        self.assertIn("--computer-use", worker_command(config, make_claim(), has_repo=True))
+        self.assertNotIn("--display", worker_command(config, make_claim(), has_repo=True))
+        self.assertEqual(worker_environment(config, make_claim())["DISPLAY"], ":0")
+
+    def test_display_validated(self) -> None:
+        with self.assertRaises(ConfigError):
+            make_config(WORKER_DISPLAY="screen one")
+
+    def test_no_computer_use_exports_no_display(self) -> None:
+        config, _ = make_config()
+        self.assertNotIn("DISPLAY", worker_environment(config, make_claim()))
+
+    def test_my_machine_worker_shell_gets_the_display(self) -> None:
+        # Same gap as the pool worker: Cursor's executor reads --display, but a
+        # browser the agent starts from a shell reads DISPLAY.
+        from cursor_tensorlake.config import desktop_environment
+
+        config, _ = make_config(WORKER_COMPUTER_USE="true")
+        self.assertEqual(desktop_environment(config)["DISPLAY"], ":1")
+        plain, _ = make_config()
+        self.assertEqual(desktop_environment(plain), {})
+
     def test_max_workers(self) -> None:
         config, _ = make_config(MAX_WORKERS="20")
         self.assertEqual(config.max_workers, 20)

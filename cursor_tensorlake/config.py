@@ -102,6 +102,8 @@ class Config:
     worker_labels_json: str | None
     worker_computer_use: bool
     worker_share_desktop: str | None
+    worker_display: str | None
+    worker_shell_display: str | None
     warm_idle: int
     max_workers: int
     session_retention_secs: int
@@ -153,6 +155,11 @@ class Config:
                 "an any-repo pool serves every repository, so unset one of them"
             )
 
+        share_desktop = _parse_share_desktop(env.get("WORKER_SHARE_DESKTOP"))
+        display_pin, shell_display = _resolve_displays(
+            env.get("WORKER_DISPLAY"), share_desktop=share_desktop
+        )
+
         allow_out = _parse_list(env.get("SANDBOX_ALLOW_OUT"))
         if allow_out:
             for host in REQUIRED_EGRESS:
@@ -183,7 +190,9 @@ class Config:
             ),
             worker_labels_json=_parse_labels(env.get("WORKER_LABELS_JSON")),
             worker_computer_use=_bool(env.get("WORKER_COMPUTER_USE"), False),
-            worker_share_desktop=_parse_share_desktop(env.get("WORKER_SHARE_DESKTOP")),
+            worker_share_desktop=share_desktop,
+            worker_display=display_pin,
+            worker_shell_display=shell_display,
             warm_idle=_non_negative_int(env, "WARM_IDLE", 0),
             max_workers=_non_negative_int(env, "MAX_WORKERS", 0),
             session_retention_secs=_non_negative_int(
@@ -456,15 +465,54 @@ def worker_command(
     return command
 
 
+def desktop_environment(config: Config) -> dict[str, str]:
+    """``DISPLAY`` for a computer-use worker, so the agent's own shells find it.
+
+    Cursor's executor gets the display from ``--display``, but a
+    ``google-chrome`` the agent starts from a terminal tool call reads the
+    environment. Without this it fails to open, on a machine that has a
+    perfectly good desktop.
+    """
+    if not (config.worker_computer_use and config.worker_shell_display):
+        return {}
+    return {
+        "DISPLAY": config.worker_shell_display,
+        "XAUTHORITY": f"{SANDBOX_HOME}/.Xauthority",
+    }
+
+
+def heartbeat_settings(config: Config) -> dict[str, object]:
+    """Settings the orchestrator echoes and the launcher compares with ``.env``.
+
+    Every one of them changes how the spawn hook launches a worker, so a change
+    has to restart the orchestrator process instead of waiting for a worker to
+    read it. The orchestrator writes these; ``cursor-tl-up`` reads them back.
+    """
+    return {
+        "pool_mode": "any-repo" if config.cursor_pool_any_repo else "repo",
+        "pool_repo_url": config.cursor_pool_repo_url,
+        "computer_use": config.worker_computer_use,
+        "display": config.worker_display,
+        "shell_display": config.worker_shell_display,
+        "share_desktop": config.worker_share_desktop,
+    }
+
+
 def computer_use_flags(config: Config) -> list[str]:
     """``worker`` flags for computer use; shared by pool workers and My Machines.
 
-    Linux: with no ``--display`` the worker starts its own TigerVNC + Xfce
-    desktop. The image built with ``WORKER_COMPUTER_USE=true`` carries them.
+    Linux: ``--display`` pins the worker to an existing X display. The desktop
+    worker image already boots a TigerVNC + Xfce session on ``:1`` and exports
+    ``DISPLAY=:1``, so the default attaches to that one. ``--share-desktop``
+    then serves the same desktop, which is the one the agent's own shells use.
+    ``WORKER_DISPLAY=managed`` lets the worker start a second desktop instead,
+    at the cost of the agent screenshotting a screen its browser is not on.
     """
     if not config.worker_computer_use:
         return []
     flags = ["--computer-use"]
+    if config.worker_display:
+        flags.extend(["--display", config.worker_display])
     if config.worker_share_desktop:
         flags.extend(["--share-desktop", config.worker_share_desktop])
     return flags
@@ -489,6 +537,7 @@ def worker_environment(config: Config, claim: Claim) -> dict[str, str]:
     }
     if claim.worker_name:
         env["CURSOR_WORKER_NAME"] = claim.worker_name
+    env.update(desktop_environment(config))
     for name in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy"):
         value = os.environ.get(name, "").strip()
         if value:
@@ -497,6 +546,51 @@ def worker_environment(config: Config, claim: Claim) -> dict[str, str]:
 
 
 SHARE_DESKTOP_MODES = ("view", "view_and_control")
+
+# The desktop worker image boots TigerVNC + Xfce here before any worker starts.
+DEFAULT_WORKER_DISPLAY = ":1"
+MANAGED_DISPLAY_WORDS = ("managed", "auto", "none")
+# Cursor's own desktop takes the lowest free display, and the image holds :1.
+MANAGED_DESKTOP_DISPLAY = ":0"
+
+
+def _resolve_displays(
+    value: str | None, *, share_desktop: str | None = None
+) -> tuple[str | None, str | None]:
+    """``(--display pin, DISPLAY for the agent's shells)``.
+
+    Two things must agree or the agent works blind: the display Cursor
+    screenshots, and the display a browser started from a shell opens on. The
+    desktop image exports ``DISPLAY=:1``, so the shell side defaults there.
+
+    Cursor will not share a display you pin: it calls that display
+    operator-owned and starts a separate one for viewers. So sharing means
+    giving up the pin and letting Cursor create the desktop, and the shells
+    have to be pointed at that one instead. It takes the lowest free display,
+    and the image already holds ``:1``.
+
+    ``WORKER_DISPLAY`` values:
+
+    - unset: pin ``:1``, shells on ``:1``. Sharing turns the pin off.
+    - ``:N``: pin ``:N``, shells on ``:N``. Sharing will not serve it.
+    - ``managed``: no pin, shells on ``:0``, so sharing works.
+    - ``managed:N``: no pin, shells on ``:N``, if Cursor ever picks another.
+    """
+    display = _clean(value)
+    if display is not None and display.lower().startswith(MANAGED_DISPLAY_WORDS):
+        _, _, tail = display.partition(":")
+        shell = f":{tail}" if tail.isdigit() else MANAGED_DESKTOP_DISPLAY
+        return None, shell
+    if display is None:
+        if share_desktop:
+            return None, MANAGED_DESKTOP_DISPLAY
+        return DEFAULT_WORKER_DISPLAY, DEFAULT_WORKER_DISPLAY
+    if not re.fullmatch(r":\d+(\.\d+)?", display):
+        raise ConfigError(
+            "WORKER_DISPLAY must be an X display such as :1, or 'managed' to let "
+            "the worker create its own desktop so it can be shared"
+        )
+    return display, display
 
 
 def _parse_share_desktop(value: str | None) -> str | None:

@@ -30,7 +30,13 @@ import threading
 import time
 from typing import Any, Callable
 
-from .config import WORKER_PROCESS_NAME, Claim, Config, load_dotenv_if_available
+from .config import (
+    WORKER_PROCESS_NAME,
+    Claim,
+    Config,
+    heartbeat_settings,
+    load_dotenv_if_available,
+)
 from .cursor_api import CursorAPI, pending_entries
 from .sandbox import (
     GONE_STATUSES,
@@ -345,8 +351,7 @@ class Orchestrator:
                 "pool": self.config.cursor_pool,
                 # The launcher compares these with .env and restarts the
                 # orchestrator when they differ.
-                "pool_mode": "any-repo" if self.config.cursor_pool_any_repo else "repo",
-                "pool_repo_url": self.config.cursor_pool_repo_url,
+                **heartbeat_settings(self.config),
                 "controller_pid": self.controller_pid,
                 "controller_restarts": self.controller_restarts,
                 "sessions": counts or {},

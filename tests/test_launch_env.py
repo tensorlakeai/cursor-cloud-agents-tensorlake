@@ -17,6 +17,18 @@ from cursor_tensorlake.launch_orchestrator_sandbox import (
 
 from ._fakes import FakeProcess, FakeResult, FakeSandbox, make_config
 
+# A heartbeat from an orchestrator running the defaults of ``make_config``.
+# Spelled out rather than derived, so a new setting that the orchestrator does
+# not echo shows up here as a failure.
+MATCHING = {
+    "pool_mode": "repo",
+    "pool_repo_url": None,
+    "computer_use": False,
+    "display": ":1",
+    "shell_display": ":1",
+    "share_desktop": None,
+}
+
 
 class ForwardedEnvTests(unittest.TestCase):
     def test_pool_settings_reach_the_orchestrator(self) -> None:
@@ -39,11 +51,33 @@ class ForwardedEnvTests(unittest.TestCase):
         self.assertNotIn("CURSOR_POOL_REPO_URL", env)  # blank values are not forwarded
         self.assertEqual(env["PATH"], "/usr/local/bin:/usr/bin:/bin")
 
+    def test_computer_use_settings_reach_the_orchestrator(self) -> None:
+        # The spawn hook runs inside the orchestrator sandbox and reads these
+        # from its own environment. Unforwarded, a worker starts with no
+        # --computer-use however the local .env is set.
+        saved = dict(os.environ)
+        try:
+            os.environ.update({
+                "CURSOR_API_KEY": "sa_x",
+                "TENSORLAKE_API_KEY": "tl_x",
+                "IMAGE_NAME": "cursor-tl-worker-abc12345",
+                "WORKER_COMPUTER_USE": "true",
+                "WORKER_DISPLAY": ":1",
+                "WORKER_SHARE_DESKTOP": "view",
+            })
+            env = forwarded_env()
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        self.assertEqual(env["WORKER_COMPUTER_USE"], "true")
+        self.assertEqual(env["WORKER_DISPLAY"], ":1")
+        self.assertEqual(env["WORKER_SHARE_DESKTOP"], "view")
+
 
 class SettingsDifferTests(unittest.TestCase):
     def test_matching_heartbeat_is_not_a_difference(self) -> None:
         config, _ = make_config()
-        self.assertFalse(settings_differ({"pool_mode": "repo", "pool_repo_url": None}, config))
+        self.assertFalse(settings_differ(dict(MATCHING), config))
 
     def test_no_heartbeat_yet_is_not_a_difference(self) -> None:
         config, _ = make_config()
@@ -51,15 +85,19 @@ class SettingsDifferTests(unittest.TestCase):
 
     def test_mode_change_is_a_difference(self) -> None:
         config, _ = make_config()  # .env says repo
-        self.assertTrue(settings_differ({"pool_mode": "any-repo", "pool_repo_url": None}, config))
+        self.assertTrue(settings_differ({**MATCHING, "pool_mode": "any-repo"}, config))
 
     def test_repo_pin_change_is_a_difference(self) -> None:
         config, _ = make_config(CURSOR_POOL_REPO_URL="https://github.com/acme/widgets")
-        self.assertTrue(settings_differ({"pool_mode": "repo", "pool_repo_url": None}, config))
+        self.assertTrue(settings_differ(dict(MATCHING), config))
 
     def test_old_heartbeat_without_settings_is_a_difference(self) -> None:
         config, _ = make_config()
         self.assertTrue(settings_differ({"state": "watching"}, config))
+
+    def test_computer_use_change_is_a_difference(self) -> None:
+        config, _ = make_config(WORKER_COMPUTER_USE="true")
+        self.assertTrue(settings_differ(dict(MATCHING), config))
 
 
 class EnsureOrchestratorTests(unittest.TestCase):
@@ -79,14 +117,14 @@ class EnsureOrchestratorTests(unittest.TestCase):
 
     def test_running_process_with_matching_settings_is_kept(self) -> None:
         config, _ = make_config()
-        sandbox = self._running({"pool_mode": "repo", "pool_repo_url": None})
+        sandbox = self._running(dict(MATCHING))
         lines = self._ensure(sandbox, config)
         self.assertEqual(sandbox.started, [])
         self.assertTrue(any("already running" in line for line in lines), lines)
 
     def test_changed_settings_restart_the_process(self) -> None:
         config, _ = make_config()  # .env now says repo
-        sandbox = self._running({"pool_mode": "any-repo", "pool_repo_url": None})
+        sandbox = self._running({**MATCHING, "pool_mode": "any-repo"})
         lines = self._ensure(sandbox, config)
         self.assertEqual(len(sandbox.started), 1)
         # The new process starts from the current environment, where the
@@ -96,13 +134,13 @@ class EnsureOrchestratorTests(unittest.TestCase):
 
     def test_restart_flag_replaces_a_matching_process(self) -> None:
         config, _ = make_config()
-        sandbox = self._running({"pool_mode": "repo", "pool_repo_url": None})
+        sandbox = self._running(dict(MATCHING))
         self._ensure(sandbox, config, restart=True)
         self.assertEqual(len(sandbox.started), 1)
 
     def test_recreate_terminates_the_old_sandbox_first(self) -> None:
         config, _ = make_config()
-        old = self._running({"pool_mode": "repo", "pool_repo_url": None})
+        old = self._running(dict(MATCHING))
         new = FakeSandbox(name="cursor-tl-orch-x", bind_outcome="created")
         lines: list[str] = []
         with mock.patch("cursor_tensorlake.launch_orchestrator_sandbox.connect_sandbox", return_value=old), \

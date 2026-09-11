@@ -31,7 +31,14 @@ from typing import Any, Callable, Sequence
 
 # Load .env before importing the SDK: tensorlake.sandbox snapshots
 # TENSORLAKE_API_KEY into module-level defaults at import time.
-from .config import SANDBOX_HOME, SANDBOX_USER_SPEC, Config, ConfigError, load_dotenv_if_available
+from .config import (
+    SANDBOX_HOME,
+    SANDBOX_USER_SPEC,
+    Config,
+    ConfigError,
+    heartbeat_settings,
+    load_dotenv_if_available,
+)
 
 load_dotenv_if_available()
 
@@ -67,6 +74,9 @@ _FORWARDED_ENV = (
     "SANDBOX_LAUNCH_TIMEOUT_SECS",
     "WORKER_IDLE_RELEASE_SECS",
     "WORKER_LABELS_JSON",
+    "WORKER_COMPUTER_USE",
+    "WORKER_SHARE_DESKTOP",
+    "WORKER_DISPLAY",
     "WARM_IDLE",
     "MAX_WORKERS",
     "SESSION_RETENTION_SECS",
@@ -110,11 +120,8 @@ def _status_in(sandbox: Any) -> dict[str, Any] | None:
 
 
 def pool_settings(config: Config) -> dict[str, Any]:
-    """The pool settings the orchestrator echoes in its heartbeat."""
-    return {
-        "pool_mode": "any-repo" if config.cursor_pool_any_repo else "repo",
-        "pool_repo_url": config.cursor_pool_repo_url,
-    }
+    """The settings the orchestrator echoes in its heartbeat."""
+    return dict(heartbeat_settings(config))
 
 
 def settings_differ(status: dict[str, Any] | None, config: Config) -> bool:

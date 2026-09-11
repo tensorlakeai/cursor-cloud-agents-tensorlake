@@ -32,6 +32,7 @@ from .config import (
     Config,
     ConfigError,
     computer_use_flags,
+    desktop_environment,
     load_dotenv_if_available,
 )
 
@@ -134,6 +135,7 @@ def ensure_machine(config: Config, machine_name: str) -> Any:
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "GIT_TERMINAL_PROMPT": "0",
         "NODE_COMPILE_CACHE": "/tmp/cursor-compile-cache",
+        **desktop_environment(config),
     }
     try:
         sandbox.kill_process(WORKER_PROCESS_NAME)
