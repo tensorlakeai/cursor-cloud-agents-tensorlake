@@ -261,15 +261,26 @@ class WorkerCommandTests(unittest.TestCase):
         self.assertEqual(env["DISPLAY"], ":1")
         self.assertEqual(env["XAUTHORITY"], "/home/tl-user/.Xauthority")
 
-    def test_share_desktop_leaves_the_desktop_to_the_worker(self) -> None:
-        # --share-desktop shares a worker-created, isolated desktop, so the
-        # default display pin steps aside for it.
+    def test_share_desktop_drops_the_pin_but_still_points_the_shells_at_it(self) -> None:
+        # Cursor refuses to share a pinned display: it calls that one
+        # operator-owned and starts a separate desktop for viewers. So sharing
+        # has to give up the pin. The shells must then follow Cursor's desktop,
+        # or a browser started from one opens on the image's :1 and every
+        # screenshot comes back empty.
         config, _ = make_config(WORKER_COMPUTER_USE="true", WORKER_SHARE_DESKTOP="view")
         self.assertIsNone(config.worker_display)
-        self.assertNotIn("--display", worker_command(config, make_claim(), has_repo=True))
-        self.assertNotIn("DISPLAY", worker_environment(config, make_claim()))
+        argv = worker_command(config, make_claim(), has_repo=True)
+        self.assertNotIn("--display", argv)
+        self.assertEqual(argv[argv.index("--share-desktop") + 1], "view")
+        self.assertEqual(worker_environment(config, make_claim())["DISPLAY"], ":0")
 
-    def test_explicit_display_wins_over_share_desktop(self) -> None:
+    def test_managed_display_can_name_the_number(self) -> None:
+        # Escape hatch for the day Cursor's desktop is not :0.
+        config, _ = make_config(WORKER_COMPUTER_USE="true", WORKER_DISPLAY="managed:4")
+        self.assertIsNone(config.worker_display)
+        self.assertEqual(worker_environment(config, make_claim())["DISPLAY"], ":4")
+
+    def test_explicit_display_is_honoured(self) -> None:
         config, _ = make_config(
             WORKER_COMPUTER_USE="true", WORKER_SHARE_DESKTOP="view", WORKER_DISPLAY=":2"
         )
@@ -280,6 +291,7 @@ class WorkerCommandTests(unittest.TestCase):
         self.assertIsNone(config.worker_display)
         self.assertIn("--computer-use", worker_command(config, make_claim(), has_repo=True))
         self.assertNotIn("--display", worker_command(config, make_claim(), has_repo=True))
+        self.assertEqual(worker_environment(config, make_claim())["DISPLAY"], ":0")
 
     def test_display_validated(self) -> None:
         with self.assertRaises(ConfigError):

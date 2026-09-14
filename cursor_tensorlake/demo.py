@@ -300,8 +300,12 @@ def cmd_watch(config: Config, args: argparse.Namespace) -> int:
         print("A recorder is already running there. Nothing to do.")
         return 0
     install_recorder(sandbox)
-    start_recorder(sandbox, display=config.worker_display, fps=args.fps)
-    where = config.worker_display or "the display with a browser window"
+    # The display the agent's own browser opens on, which is the one worth
+    # filming. It is the pinned display by default, and Cursor's own desktop
+    # when WORKER_DISPLAY is managed.
+    display = config.worker_shell_display
+    start_recorder(sandbox, display=display, fps=args.fps)
+    where = display or "the display with a browser window"
     print(f"Recording {where} into {ARTIFACT_DIR}.")
     print("Let the agent work, then run `cursor-tl-demo collect`.")
     return 0

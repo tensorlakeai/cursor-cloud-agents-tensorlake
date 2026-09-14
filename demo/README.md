@@ -140,10 +140,11 @@ agent: it copies `demo_recorder.sh` into the worker sandbox and runs it as a
 named process. The script reads the screen with `ffmpeg -f x11grab` and writes
 a video and periodic stills.
 
-The worker and the recorder look at the same desktop because
-`WORKER_DISPLAY` pins the worker to `:1`, the display the image already boots.
-With `WORKER_DISPLAY=managed` the worker starts its own desktop instead, and
-the recorder then finds the display that has a browser window on it.
+The worker and the recorder look at the same desktop because the recorder
+films the display the agent's own shells use. `WORKER_DISPLAY` defaults to
+`:1`, the display the image already boots, and the recorder films `:1`. With
+`WORKER_DISPLAY=managed` the worker starts its own desktop, the shells move to
+`:0`, and the recorder follows them there.
 
 The video is fragmented MP4, so it stays playable if the sandbox is suspended
 or the recorder is killed. `collect --stop` signals the recorder first, which
